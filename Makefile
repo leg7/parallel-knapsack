@@ -2,14 +2,19 @@ OBJ_DIR = build
 SRC_DIR = src
 
 CXX = clang++
-CXXFLAGS = -O3 -MMD -MP
+CXXFLAGS = -O3 -MMD -MP -std=c++17 -Wall -Wextra
+
+SRC_CPP      := $(shell find $(SRC_DIR) -type f -name '*.cpp')
+OBJ_CPP      := $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/%.o, $(SRC_CPP))
+
+OUT = kp
+
+-include $(patsubst %.o, %.d, $(OBJ_CPP))
 
 .PHONY: clean
 
-all: 1
-
-1: $(OBJ_DIR)/kp.o
-	$(CXX) $(OBJ_DIR)/kp.o -o $@
+all: $(OBJ_CPP)
+	$(CXX) $(OBJ_CPP) -o $(OUT)
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp Makefile
 	@mkdir -p $(shell dirname $@)
@@ -17,4 +22,4 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp Makefile
 
 clean:
 	rm -rf $(OBJ_DIR)
-	rm 1
+	rm $(OUT)
