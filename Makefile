@@ -23,3 +23,6 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp Makefile
 clean:
 	rm -rf $(OBJ_DIR)
 	rm $(OUT)
+
+run: all
+	mpirun -n 4 $(OUT)
