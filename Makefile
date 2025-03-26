@@ -1,7 +1,7 @@
 OBJ_DIR = build
 SRC_DIR = src
 
-CXX = clang++
+CXX = mpic++
 CXXFLAGS = -O3 -MMD -MP -std=c++17 -Wall -Wextra
 
 SRC_CPP      := $(shell find $(SRC_DIR) -type f -name '*.cpp')

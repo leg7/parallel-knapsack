@@ -1,8 +1,10 @@
-
 #include <iostream>
 #include <fstream>
 #include <chrono>
 #include <vector>
+
+#include <mpi.h>
+#include <stdio.h>
 
 using namespace std;
 
@@ -110,34 +112,57 @@ void printKnapsackSolution(vector<bool> & solution) {
 
 
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        cerr << "Usage: knapsack inputFile  [verbose] " << endl;
-        cerr << "A second optional allows to disable the verbose mode for debugging" << endl;
-        return 1;
-    }
+    // if (argc < 2) {
+    //     cerr << "Usage: knapsack inputFile  [verbose] " << endl;
+    //     cerr << "A second optional allows to disable the verbose mode for debugging" << endl;
+    //     return 1;
+    // }
+    //
+    //
+    // // initialisation variables et conteneurs
+    // vector<int> weights;
+    // vector<int> values;
+    // int knapsackBound=0;
+    // int nbItems;
+    // int costSolution=0;
+    // vector<bool> solution;
+    //
+    //
+    // //if (argc < 3) nbMaxItems = atoi(argv[3]);
+    // if (argc < 3) verboseMode = false;
+    // const char* instanceFile = argv[1];
+    //
+    // readInstance(instanceFile, weights, values, knapsackBound, nbItems);
+    //
+    // auto start = std::chrono::steady_clock::now();
+    // solveDP(weights, values, knapsackBound, nbItems, costSolution, solution);
+    // auto end = std::chrono::steady_clock::now();
+    // std::chrono::duration<double> elapsed_seconds = end-start;
+    // cout << "solution optimale trouvee de cout " << costSolution << " en temps: " << elapsed_seconds.count() << "s" << endl<< endl;
+    // if (verboseMode) printKnapsackSolution(solution);
+    //
+	    // Initialize the MPI environment
+    MPI_Init(NULL, NULL);
 
+    // Get the number of processes
+    int world_size;
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 
-    // initialisation variables et conteneurs
-    vector<int> weights;
-    vector<int> values;
-    int knapsackBound=0;
-    int nbItems;
-    int costSolution=0;
-    vector<bool> solution;
+    // Get the rank of the process
+    int world_rank;
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
+    // Get the name of the processor
+    char processor_name[MPI_MAX_PROCESSOR_NAME];
+    int name_len;
+    MPI_Get_processor_name(processor_name, &name_len);
 
-    //if (argc < 3) nbMaxItems = atoi(argv[3]);
-    if (argc < 3) verboseMode = false;
-    const char* instanceFile = argv[1];
+    // Print off a hello world message
+    printf("Hello world from processor %s, rank %d out of %d processors\n",
+           processor_name, world_rank, world_size);
 
-    readInstance(instanceFile, weights, values, knapsackBound, nbItems);
-
-    auto start = std::chrono::steady_clock::now();
-    solveDP(weights, values, knapsackBound, nbItems, costSolution, solution);
-    auto end = std::chrono::steady_clock::now();
-    std::chrono::duration<double> elapsed_seconds = end-start;
-    cout << "solution optimale trouvee de cout " << costSolution << " en temps: " << elapsed_seconds.count() << "s" << endl<< endl;
-    if (verboseMode) printKnapsackSolution(solution);
+    // Finalize the MPI environment.
+    MPI_Finalize();
 
     return 0;
 
