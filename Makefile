@@ -24,5 +24,19 @@ clean:
 	rm -rf $(OBJ_DIR)
 	rm $(OUT)
 
-run: all
+ez: all
 	mpirun -n 4 $(OUT) ./instances/kp_100_1.in
+	mpirun -n 4 $(OUT) ./instances/kp_100_2.in
+	mpirun -n 4 $(OUT) ./instances/kp_1000_1.in
+	mpirun -n 4 $(OUT) ./instances/kp_1000_2.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_1_0.01.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_2_0.01.in
+
+hard: all
+	mpirun -n 4 $(OUT) ./instances/kp_10000_1_0.04.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_1_0.05.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_1_0.1.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_2_0.04.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_2_0.05.in
+	mpirun -n 4 $(OUT) ./instances/kp_10000_2_0.1.in
+
