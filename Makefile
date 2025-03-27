@@ -25,4 +25,4 @@ clean:
 	rm $(OUT)
 
 run: all
-	mpirun -n 4 $(OUT)
+	mpirun -n 4 $(OUT) ./instances/kp_100_1.in
