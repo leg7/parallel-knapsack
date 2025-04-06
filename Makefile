@@ -49,6 +49,14 @@ ez3: all
 	mpirun -n 4 $(OUT) 3 ./instances/kp_10000_1_0.01.in
 	mpirun -n 4 $(OUT) 3 ./instances/kp_10000_2_0.01.in
 
+ez4: all
+	mpirun -n 4 $(OUT) 4 ./instances/kp_100_1.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_100_2.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_1000_1.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_1000_2.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_1_0.01.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_2_0.01.in
+
 # Cibles pour les 4ests "difficiles" avec les différents solvers
 hard1: all
 	mpirun -n 4 $(OUT) 1 ./instances/kp_10000_1_0.04.in
@@ -74,3 +82,10 @@ hard3: all
 	mpirun -n 4 $(OUT) 3 ./instances/kp_10000_2_0.05.in
 	mpirun -n 4 $(OUT) 3 ./instances/kp_10000_2_0.1.in
 
+hard4: all
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_1_0.04.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_1_0.05.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_1_0.1.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_2_0.04.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_2_0.05.in
+	mpirun -n 4 $(OUT) 4 ./instances/kp_10000_2_0.1.in
