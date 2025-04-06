@@ -594,30 +594,38 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	}
 
 
-	MPI_Request send_request, recv_request;
+	MPI_Request send_request = MPI_REQUEST_NULL;
+	MPI_Request recv_request = MPI_REQUEST_NULL;
 	unsigned* send_data = NULL;
 	unsigned* recv_data = NULL;
+	unsigned* next_recv_data = NULL;
 
+	// i = 0 -> i = 1
+	if (!we_are_the_last_rank) {
+		int next_item_weight = instance.items.weights[1];
+		send_data = (unsigned*)malloc(next_item_weight * sizeof(unsigned));
+		copy_last_k_elements(matrixDP[0], send_data, local_weight, next_item_weight);
+
+		MPI_Isend(send_data, next_item_weight, MPI_UNSIGNED, world_rank + 1, 1, MPI_COMM_WORLD, &send_request);
+	}
+
+   if (! we_are_the_master) {
+        int item_weight = instance.items.weights[1];
+        next_recv_data = (unsigned*)malloc(item_weight * sizeof(unsigned));
+        MPI_Irecv(next_recv_data, item_weight, MPI_UNSIGNED, world_rank - 1, 1, MPI_COMM_WORLD, &recv_request);
+    }
 
 	for (int i = 1; i < instance.items.count; i++) {
 
-		if (! we_are_the_last_rank) {
-			int next_item_weight = instance.items.weights[i];
-			send_data = (unsigned*)malloc(next_item_weight * sizeof(unsigned));
-			copy_last_k_elements(matrixDP[i - 1], send_data, local_weight, next_item_weight);
-
-			MPI_Isend(send_data, next_item_weight, MPI_UNSIGNED, world_rank + 1, i, MPI_COMM_WORLD, &send_request);
-		}
-
-		if (! we_are_the_master) {
-			int item_weight = instance.items.weights[i];
-			recv_data = (unsigned*)malloc(item_weight * sizeof(unsigned));
-
-			MPI_Irecv(recv_data, item_weight, MPI_UNSIGNED, world_rank - 1, i, MPI_COMM_WORLD, &recv_request);
+		// receive data from previous process
+		if (!we_are_the_master) {
 			MPI_Wait(&recv_request, MPI_STATUS_IGNORE);
+			recv_data = next_recv_data;
+			next_recv_data = NULL;
 		}
 
 
+		// calculate DP matrix
 		for (int j = local_weight; j >= 0; j--) {
 			int m = subdomain_start + j;
 			bool const objectFits = instance.items.weights[i] <= m;
@@ -635,18 +643,34 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 			}
 		}
 
-        if (!we_are_the_last_rank) {
+		// prepare data to send to next process
+		if (! we_are_the_last_rank && i < instance.items.count - 1) {
+			int next_item_weight = instance.items.weights[i+1];
+			send_data = (unsigned*)malloc(next_item_weight * sizeof(unsigned));
+			copy_last_k_elements(matrixDP[i], send_data, local_weight, next_item_weight);
+
+			MPI_Isend(send_data, next_item_weight, MPI_UNSIGNED, world_rank + 1, i + 1, MPI_COMM_WORLD, &send_request);
+		}
+
+
+		if (send_data != NULL) {
             MPI_Wait(&send_request, MPI_STATUS_IGNORE);
             free(send_data);
 			send_data = NULL;
         }
 
+		// receive data from previous process
+		if (! we_are_the_master && i < instance.items.count - 1) {
+			int item_weight = instance.items.weights[i+1];
+			next_recv_data = (unsigned*)malloc(item_weight * sizeof(unsigned));
+
+			MPI_Irecv(next_recv_data, item_weight, MPI_UNSIGNED, world_rank - 1, i + 1, MPI_COMM_WORLD, &recv_request);
+		}
+
 		if (recv_data != NULL) {
 			free(recv_data);
 			recv_data = NULL;
 		}
-
-
 	}
 
 
