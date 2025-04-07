@@ -1,7 +1,6 @@
 #include <cstring>
 #include <iostream>
 #include <fstream>
-#include <chrono>
 #include <vector>
 #include <cstdlib>
 
@@ -11,7 +10,7 @@
 
 using namespace std;
 
-enum ERROR_CODE {
+enum Error_code {
 	ERROR_CODE_TOO_MANY_RANKS,
 	ERROR_CODE_MISSING_INSTANCE_ARGUMENT,
 	ERROR_CODE_INVALID_SOLVER
@@ -36,8 +35,19 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 // void solver6(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 3 with Bsend and Reicv and backtrack distributed
 // void solver7(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 3 with Isend and Ireicv and backtrack distributed
 
-fn solvers[] = {
-	nullptr,
+enum Solver_key {
+	SOLVER_1,
+	SOLVER_2,
+	SOLVER_3,
+	SOLVER_4,
+	SOLVER_5,
+	SOLVER_6,
+	SOLVER_7,
+
+	NUMBER_OF_SOLVERS,
+};
+
+fn solver_lut[] = {
 	solver1,
 	solver2,
 	solver3,
@@ -64,24 +74,19 @@ int main(int argc, char** argv) {
 	int world_size; MPI_Comm_size(MPI_COMM_WORLD, &world_size);
 	int world_rank; MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
-	int method = 1;
+	Solver_key chosen_solver = SOLVER_1;
 	bool verbose_mode = false;
-	Instance instance;
-
 
 	if (argc < 3) {
 		cerr << "Usage: knapsack solver[1|2|3|4|5|6|7] inputFile  [verbose] " << endl;
-		cerr << "A thrid optional allows to disable the verbose mode for debugging" << endl;
+		cerr << "A thrid option allows to enable the verbose mode for debugging" << endl;
 		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_MISSING_INSTANCE_ARGUMENT);
+	} else if (argc > 1) {
+		chosen_solver = (Solver_key)(std::atoi(argv[1]) - 1);
 	}
 
-
-	if (argc > 1) {
-		method = std::atoi(argv[1]);
-	}
-
-	if (method < 1 or method > 5) {
-		cerr << "Le numéro du solver doit etre entre 1 et 5" << endl;
+	if (chosen_solver < SOLVER_1 || chosen_solver >= NUMBER_OF_SOLVERS) {
+		cerr << "Le numéro du solver doit etre entre " << SOLVER_1 + 1 << " et " << NUMBER_OF_SOLVERS << endl;
 		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_INVALID_SOLVER);
 	}
 
@@ -92,6 +97,8 @@ int main(int argc, char** argv) {
 	}
 
 	/* ----- Initialisation variables et conteneurs ----- */
+
+	Instance instance;
 
 	// Read and parse the instance file
 	ifstream infile;
@@ -113,7 +120,7 @@ int main(int argc, char** argv) {
 		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_TOO_MANY_RANKS);
 	}
 
-	solvers[method](instance, world_size, world_rank, verbose_mode);
+	solver_lut[chosen_solver](instance, world_size, world_rank, verbose_mode);
 
 	MPI_Finalize();
 
