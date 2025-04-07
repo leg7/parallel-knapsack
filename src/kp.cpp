@@ -47,12 +47,14 @@ fn solvers[] = {
 	// solver7
 };
 
+
 void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k) {
     if (k > total_size) {
         k = total_size;
     }
-
-    memcpy(destination, source + (total_size - k), k * sizeof(unsigned int));
+    //
+    // memcpy(destination, source + (total_size - k), k * sizeof(unsigned int));
+	std::copy(source + (total_size - k), source + total_size, destination);
 }
 
 
@@ -131,6 +133,7 @@ void solver1(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	int subdomain_start = world_rank * subdomain_size + world_rank;
 	bool const we_are_the_last_rank = world_size - 1 == world_rank;
 	int subdomain_end = we_are_the_last_rank ? instance.max_weight : subdomain_start + subdomain_size;
+
 
 	unsigned int** matrixDP = new unsigned int* [instance.items.count];
 	for (int i = 0; i < instance.items.count; i++){
@@ -235,6 +238,7 @@ void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	bool const we_are_the_last_rank = world_size - 1 == world_rank;
 	int subdomain_end = we_are_the_last_rank ? instance.max_weight : subdomain_start + subdomain_size;
 	int local_weight = subdomain_end - subdomain_start;
+
 
 	unsigned int** matrixDP = new unsigned int* [instance.items.count];
 	for (int i = 0; i < instance.items.count; i++){
@@ -388,6 +392,7 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	int subdomain_end = we_are_the_last_rank ? instance.max_weight : subdomain_start + subdomain_size;
 	int local_weight = subdomain_end - subdomain_start;
 
+
 	unsigned int** matrixDP = new unsigned int* [instance.items.count];
 	for (int i = 0; i < instance.items.count; i++){
 		matrixDP[i] = new unsigned int [local_weight + 1];
@@ -435,12 +440,14 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 			free(buffer);
 		}
 
+
 		unsigned* recv_data = NULL;
 		if (! we_are_the_master) {
 			int item_weight = instance.items.weights[i];
 			recv_data = (unsigned*)malloc(item_weight * sizeof(unsigned));
 
 			MPI_Recv(recv_data, item_weight, MPI_UNSIGNED, world_rank - 1, i, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+
 		}
 
 		for (int j = local_weight; j >= 0; j--) {
@@ -463,7 +470,6 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 		if (recv_data != NULL) {
 			free(recv_data);
 		}
-
 	}
 
 
@@ -558,6 +564,7 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	free(recv_counts);
 	free(displs);
 }
+
 
 // Like solver3, but using Isend and Irecv
 void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mode) {
@@ -617,13 +624,20 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 
 	for (int i = 1; i < instance.items.count; i++) {
 
-		// receive data from previous process
+		// wait receive data from previous process
 		if (!we_are_the_master) {
 			MPI_Wait(&recv_request, MPI_STATUS_IGNORE);
 			recv_data = next_recv_data;
 			next_recv_data = NULL;
 		}
 
+		// prepare receive data from previous process
+		if (! we_are_the_master && i < instance.items.count - 1) {
+			int item_weight = instance.items.weights[i+1];
+			next_recv_data = (unsigned*)malloc(item_weight * sizeof(unsigned));
+
+			MPI_Irecv(next_recv_data, item_weight, MPI_UNSIGNED, world_rank - 1, i + 1, MPI_COMM_WORLD, &recv_request);
+		}
 
 		// calculate DP matrix
 		for (int j = local_weight; j >= 0; j--) {
@@ -643,6 +657,17 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 			}
 		}
 
+		if (recv_data != NULL) {
+			free(recv_data);
+			recv_data = NULL;
+		}
+
+		if (send_data != NULL) {
+            MPI_Wait(&send_request, MPI_STATUS_IGNORE);
+            free(send_data);
+			send_data = NULL;
+        }
+
 		// prepare data to send to next process
 		if (! we_are_the_last_rank && i < instance.items.count - 1) {
 			int next_item_weight = instance.items.weights[i+1];
@@ -653,25 +678,13 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 		}
 
 
-		if (send_data != NULL) {
-            MPI_Wait(&send_request, MPI_STATUS_IGNORE);
-            free(send_data);
-			send_data = NULL;
-        }
 
-		// receive data from previous process
-		if (! we_are_the_master && i < instance.items.count - 1) {
-			int item_weight = instance.items.weights[i+1];
-			next_recv_data = (unsigned*)malloc(item_weight * sizeof(unsigned));
-
-			MPI_Irecv(next_recv_data, item_weight, MPI_UNSIGNED, world_rank - 1, i + 1, MPI_COMM_WORLD, &recv_request);
-		}
-
-		if (recv_data != NULL) {
-			free(recv_data);
-			recv_data = NULL;
-		}
 	}
+
+	if (send_data != NULL) {
+        MPI_Wait(&send_request, MPI_STATUS_IGNORE);
+        free(send_data);
+    }
 
 
 	// Merge each matrixDP on final_matrixDP
@@ -763,3 +776,4 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	free(recv_counts);
 	free(displs);
 }
+
