@@ -3,12 +3,30 @@
 #include <fstream>
 #include <vector>
 #include <cstdlib>
+#include <cassert>
 
 #include <mpi.h>
-#include <stdio.h>
-#include <assert.h>
 
 using namespace std;
+
+// --- Forward declarations
+
+struct Instance;
+
+using fn = void (*)(Instance& instance, int world_size, int world_rank);
+
+void solver1(Instance& instance, int world_size, int world_rank); 	// Schema 1
+void solver2(Instance& instance, int world_size, int world_rank);	// Schema 2
+void solver3(Instance& instance, int world_size, int world_rank);	// Schema 3 with Bsend and Reicv
+void solver4(Instance& instance, int world_size, int world_rank);	// Schema 3 with Isend and Ireicv
+// void solver5(Instance& instance, int world_size, int world_rank);	// Schema 2 with backtrack distributed
+// void solver6(Instance& instance, int world_size, int world_rank);	// Schema 3 with Bsend and Reicv and backtrack distributed
+// void solver7(Instance& instance, int world_size, int world_rank);	// Schema 3 with Isend and Ireicv and backtrack distributed
+
+void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k);
+void sequential_backtrack(Instance const& instance, unsigned const** matrixDP, double& timer);
+
+// Declarations
 
 enum Error_code {
 	ERROR_CODE_TOO_MANY_RANKS,
@@ -25,16 +43,6 @@ struct Instance {
 	int max_weight = 0;
 };
 
-using fn = void (*)(Instance& instance, int world_size, int world_rank, bool verbose_mode);
-
-void solver1(Instance& instance, int world_size, int world_rank, bool verbose_mode); 	// Schema 1
-void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 2
-void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 3 with Bsend and Reicv
-void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 3 with Isend and Ireicv
-// void solver5(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 2 with backtrack distributed
-// void solver6(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 3 with Bsend and Reicv and backtrack distributed
-// void solver7(Instance& instance, int world_size, int world_rank, bool verbose_mode);	// Schema 3 with Isend and Ireicv and backtrack distributed
-
 enum Solver_key {
 	SOLVER_1,
 	SOLVER_2,
@@ -47,7 +55,7 @@ enum Solver_key {
 	NUMBER_OF_SOLVERS,
 };
 
-fn solver_lut[] = {
+fn SOLVER_LUT[] = {
 	solver1,
 	solver2,
 	solver3,
@@ -57,16 +65,7 @@ fn solver_lut[] = {
 	// solver7
 };
 
-
-void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k) {
-    if (k > total_size) {
-        k = total_size;
-    }
-    //
-    // memcpy(destination, source + (total_size - k), k * sizeof(unsigned int));
-	std::copy(source + (total_size - k), source + total_size, destination);
-}
-
+bool VERBOSE_MODE = false;
 
 int main(int argc, char** argv) {
 	MPI_Init(&argc, &argv);
@@ -75,7 +74,6 @@ int main(int argc, char** argv) {
 	int world_rank; MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
 
 	Solver_key chosen_solver = SOLVER_1;
-	bool verbose_mode = false;
 
 	if (argc < 3) {
 		cerr << "Usage: knapsack solver[1|2|3|4|5|6|7] inputFile  [verbose] " << endl;
@@ -93,7 +91,7 @@ int main(int argc, char** argv) {
 	const char* instance_file = argv[2];
 
 	if (argc == 4) {
-		verbose_mode = true;
+		VERBOSE_MODE = true;
 	}
 
 	/* ----- Initialisation variables et conteneurs ----- */
@@ -120,7 +118,7 @@ int main(int argc, char** argv) {
 		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_TOO_MANY_RANKS);
 	}
 
-	solver_lut[chosen_solver](instance, world_size, world_rank, verbose_mode);
+	SOLVER_LUT[chosen_solver](instance, world_size, world_rank);
 
 	MPI_Finalize();
 
@@ -133,7 +131,8 @@ int main(int argc, char** argv) {
 // DP matrix owned by each MPI rank
 // Communication: Use MPI_Allreduce to combine each partial result on each step
 // Ram use : HIGH O(world_size * sizeof(matrixDP))
-void solver1(Instance& instance, int world_size, int world_rank, bool verbose_mode) {
+void solver1(Instance& instance, int world_size, int world_rank)
+{
 	// Initialise instance data
 	bool const we_are_the_master = world_rank == 0;
 	int subdomain_size = instance.max_weight / world_size;
@@ -182,42 +181,7 @@ void solver1(Instance& instance, int world_size, int world_rank, bool verbose_mo
 
 	if (we_are_the_master) {
 		// On connait alors le cout optimal
-		int solution_cost = matrixDP[instance.items.count-1][instance.max_weight];
-
-		vector<bool> solution;
-		solution.clear();
-		solution.resize(instance.items.count);
-
-		int m = instance.max_weight;
-		for (int i = instance.items.count-1; i >=1 ; i--){
-			if (m < instance.items.weights[i] || matrixDP[i][m] == matrixDP[i-1][m]) {
-				solution[i] = false;
-			} else {
-				solution[i] = true;
-				m -= instance.items.weights[i];
-			}
-		}
-
-		solution[0] = m >= instance.items.weights[0];
-
-		timer += MPI_Wtime();
-
-		if (verbose_mode) { // Print knapsack composition
-			cout << "solution cost by DP: "  << solution_cost << endl;
-			cout << "print DP matrix : " << endl;
-			for (int i = 0; i < instance.items.count; i++){
-				for (int j = 0; j <= instance.max_weight; j++) cout <<  matrixDP[i][j] << " "  ;
-				cout << endl;
-			}
-
-			cout << "knapsack composition  : ";
-			for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
-				std::cout << ' ' << *it;
-
-			cout  << endl;
-		}
-
-		cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
+		sequential_backtrack(instance, (unsigned const**)matrixDP, timer);
 	}
 	/* ----- Cleanup ----- */
 
@@ -232,11 +196,12 @@ void solver1(Instance& instance, int world_size, int world_rank, bool verbose_mo
 // process 0 will have part 0 to max_weight / world_size
 // process 1 will have part max_weight / world_size + 1 to 2 * max_weight / world_size
 // etc.. last process will have little small part, but it's nothing for large instance.
-// At least gather all to root to build final matrix.
+// At last gather all to root to build the final matrix and backtrack.
 // Communication: Use MPI_Allgather to know each partial matrix size on each process
 // 					then use MPI_Allgatherv to share result on a global tab (last matrix line made).
 // Ram use : Lower O(world_size * (sizeof(matrixDP) / P) + (world_size * sizeof(row) + sizeof(matrixDP)).
-void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mode) {
+void solver2(Instance& instance, int world_size, int world_rank)
+{
 
 	// Initialise instance data
 	bool const we_are_the_master = world_rank == 0;
@@ -268,6 +233,7 @@ void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mo
 			matrixDP[0][i] = instance.items.values[0];
 		}
 	}
+
  	// Gather all partial last line local matrixDP down to all the processes
 	int* recv_counts = (int *)malloc(world_size * sizeof(int));
 	int* displs = (int *)malloc(world_size * sizeof(int));
@@ -304,7 +270,7 @@ void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	free(tab);
 
 
-	unsigned int ** final_matrixDP = nullptr;
+	unsigned int** final_matrixDP = nullptr;
 	if (we_are_the_master) {
 		final_matrixDP = new unsigned int * [instance.items.count];
 		for (int i = 0; i < instance.items.count; i++) {
@@ -321,46 +287,11 @@ void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mo
 			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
 			   NULL, NULL, NULL, MPI_UNSIGNED,
 			   0, MPI_COMM_WORLD);
-
 		}
 	}
 
 	if (we_are_the_master) {
-		int solution_cost = final_matrixDP[instance.items.count-1][instance.max_weight];
-
-		vector<bool> solution;
-		solution.clear();
-		solution.resize(instance.items.count);
-
-		int m = instance.max_weight;
-		for (int i = instance.items.count-1; i >=1 ; i--){
-			if (m < instance.items.weights[i] || final_matrixDP[i][m] == final_matrixDP[i-1][m]) {
-				solution[i] = false;
-			} else {
-				solution[i] = true;
-				m -= instance.items.weights[i];
-			}
-		}
-
-		solution[0] = m >= instance.items.weights[0];
-
-		timer += MPI_Wtime();
-
-		if (verbose_mode) { // Print knapsack composition
-			cout << "solution cost by DP: "  << solution_cost << endl;
-			cout << "print DP matrix : " << endl;
-			for (int i = 0; i < instance.items.count; i++){
-				for (int j = 0; j <= instance.max_weight; j++) cout <<  final_matrixDP[i][j] << " "  ;
-				cout << endl;
-			}
-
-			cout << "knapsack composition  : ";
-			for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
-				std::cout << ' ' << *it;
-			cout  << endl;
-		}
-
-		cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
+		sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
 
 		for (int i = 0; i < instance.items.count; i++) {
 			delete [] final_matrixDP[i];
@@ -389,7 +320,8 @@ void solver2(Instance& instance, int world_size, int world_rank, bool verbose_mo
 // 					on the first elements (row) we will only send data,
 // 					on the last element (row) we will only receive data.
 // Ram use : Lower O(world_size * (sizeof(matrixDP) / P) + sizeof(neccessary(row)) + sizeof(matrixDP)).
-void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mode) {
+void solver3(Instance& instance, int world_size, int world_rank)
+{
 
 	// Initialise instance data
 	bool const we_are_the_master = world_rank == 0;
@@ -479,9 +411,6 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 		}
 	}
 
-
-
-
 	// Merge each matrixDP on final_matrixDP
 	int* recv_counts = (int *)malloc(world_size * sizeof(int));
 	int* displs = (int *)malloc(world_size * sizeof(int));
@@ -520,41 +449,7 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	}
 
 	if (we_are_the_master) {
-		int solution_cost = final_matrixDP[instance.items.count-1][instance.max_weight];
-
-		vector<bool> solution;
-		solution.clear();
-		solution.resize(instance.items.count);
-
-		int m = instance.max_weight;
-		for (int i = instance.items.count-1; i >=1 ; i--){
-			if (m < instance.items.weights[i] || final_matrixDP[i][m] == final_matrixDP[i-1][m]) {
-				solution[i] = false;
-			} else {
-				solution[i] = true;
-				m -= instance.items.weights[i];
-			}
-		}
-
-		solution[0] = m >= instance.items.weights[0];
-
-		timer += MPI_Wtime();
-
-		if (verbose_mode) { // Print knapsack composition
-			cout << "solution cost by DP: "  << solution_cost << endl;
-			cout << "print DP matrix : " << endl;
-			for (int i = 0; i < instance.items.count; i++){
-				for (int j = 0; j <= instance.max_weight; j++) cout <<  final_matrixDP[i][j] << " "  ;
-				cout << endl;
-			}
-
-			cout << "knapsack composition  : ";
-			for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
-				std::cout << ' ' << *it;
-			cout  << endl;
-		}
-
-		cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
+		sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
 
 		for (int i = 0; i < instance.items.count; i++) {
 			delete [] final_matrixDP[i];
@@ -574,7 +469,8 @@ void solver3(Instance& instance, int world_size, int world_rank, bool verbose_mo
 
 
 // Like solver3, but using Isend and Irecv
-void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mode) {
+void solver4(Instance& instance, int world_size, int world_rank)
+{
 
 	// Initialise instance data
 	bool const we_are_the_master = world_rank == 0;
@@ -684,15 +580,12 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 			MPI_Isend(send_data, next_item_weight, MPI_UNSIGNED, world_rank + 1, i + 1, MPI_COMM_WORLD, &send_request);
 		}
 
-
-
 	}
 
 	if (send_data != NULL) {
         MPI_Wait(&send_request, MPI_STATUS_IGNORE);
         free(send_data);
     }
-
 
 	// Merge each matrixDP on final_matrixDP
 	int* recv_counts = (int *)malloc(world_size * sizeof(int));
@@ -732,41 +625,7 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	}
 
 	if (we_are_the_master) {
-		int solution_cost = final_matrixDP[instance.items.count-1][instance.max_weight];
-
-		vector<bool> solution;
-		solution.clear();
-		solution.resize(instance.items.count);
-
-		int m = instance.max_weight;
-		for (int i = instance.items.count-1; i >=1 ; i--){
-			if (m < instance.items.weights[i] || final_matrixDP[i][m] == final_matrixDP[i-1][m]) {
-				solution[i] = false;
-			} else {
-				solution[i] = true;
-				m -= instance.items.weights[i];
-			}
-		}
-
-		solution[0] = m >= instance.items.weights[0];
-
-		timer += MPI_Wtime();
-
-		if (verbose_mode) { // Print knapsack composition
-			cout << "solution cost by DP: "  << solution_cost << endl;
-			cout << "print DP matrix : " << endl;
-			for (int i = 0; i < instance.items.count; i++){
-				for (int j = 0; j <= instance.max_weight; j++) cout <<  final_matrixDP[i][j] << " "  ;
-				cout << endl;
-			}
-
-			cout << "knapsack composition  : ";
-			for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
-				std::cout << ' ' << *it;
-			cout  << endl;
-		}
-
-		cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
+		sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
 
 		for (int i = 0; i < instance.items.count; i++) {
 			delete [] final_matrixDP[i];
@@ -784,3 +643,51 @@ void solver4(Instance& instance, int world_size, int world_rank, bool verbose_mo
 	free(displs);
 }
 
+void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k) {
+    if (k > total_size) {
+        k = total_size;
+    }
+    //
+    // memcpy(destination, source + (total_size - k), k * sizeof(unsigned int));
+	std::copy(source + (total_size - k), source + total_size, destination);
+}
+
+void sequential_backtrack(Instance const& instance, unsigned const** matrixDP, double& timer)
+{
+	int solution_cost = matrixDP[instance.items.count-1][instance.max_weight];
+
+	vector<bool> solution;
+	solution.clear();
+	solution.resize(instance.items.count);
+
+	int m = instance.max_weight;
+	for (int i = instance.items.count-1; i >= 1 ; i--){
+		if (m < instance.items.weights[i] || matrixDP[i][m] == matrixDP[i-1][m]) {
+			solution[i] = false;
+		} else {
+			solution[i] = true;
+			m -= instance.items.weights[i];
+		}
+	}
+
+	solution[0] = m >= instance.items.weights[0];
+
+	timer += MPI_Wtime();
+
+	if (VERBOSE_MODE) { // Print knapsack composition
+		cout << "solution cost by DP: "  << solution_cost << endl;
+		cout << "print DP matrix : " << endl;
+		for (int i = 0; i < instance.items.count; i++){
+			for (int j = 0; j <= instance.max_weight; j++) cout <<  matrixDP[i][j] << " "  ;
+			cout << endl;
+		}
+
+		cout << "knapsack composition  : ";
+		for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
+			std::cout << ' ' << *it;
+
+		cout  << endl;
+	}
+
+	cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
+}
