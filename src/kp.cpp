@@ -23,6 +23,7 @@ void solver4(Instance& instance, int world_size, int world_rank, bool distribute
 
 void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k);
 void sequential_backtrack(Instance const& instance, unsigned const** matrixDP, double& timer);
+void gather_results_and_backtrack(Instance const& instance, unsigned const** matrixDP, int world_size, int local_weight, bool we_are_the_master, double& timer, bool distribute_backtrack);
 
 // Declarations
 
@@ -94,7 +95,7 @@ int main(int argc, char** argv) {
 			++i;
 
 			if (i >= argc) {
-				cerr << "Please provide a schema number between 1 and 4 to the option --schema" << endl;
+				cerr << "Please provide a schema number between 1 and 4 to the option --schema\n";
 				abort_bad_argument();
 			}
 
@@ -112,9 +113,14 @@ int main(int argc, char** argv) {
 		} else if (strcmp(option, "--distributed-backtrack") == 0) {
 			distribute_backtrack = true;
 		} else {
-			cerr << "Argument " << option << " not supported" << endl;
+			cerr << "Argument " << option << " not supported\n";
 			abort_bad_argument();
 		}
+	}
+
+	if (chosen_solver <= SOLVER_2 && distribute_backtrack) {
+		cerr << "Schemas 1 and 2 don't support distributed backtracking\n";
+		abort_bad_argument();
 	}
 
 	/* ----- Initialisation variables et conteneurs ----- */
@@ -292,7 +298,6 @@ void solver2(Instance& instance, int world_size, int world_rank, bool distribute
 	}
 	free(tab);
 
-
 	unsigned int** final_matrixDP = nullptr;
 	if (we_are_the_master) {
 		final_matrixDP = new unsigned int * [instance.items.count];
@@ -434,60 +439,14 @@ void solver3(Instance& instance, int world_size, int world_rank, bool distribute
 		}
 	}
 
-	// Merge each matrixDP on final_matrixDP
-	int* recv_counts = (int *)malloc(world_size * sizeof(int));
-	int* displs = (int *)malloc(world_size * sizeof(int));
-  	assert(recv_counts != NULL);
-  	assert(displs != NULL);
+	gather_results_and_backtrack(instance, (unsigned const**)matrixDP, world_size, local_weight, we_are_the_master, timer, distribute_backtrack);
 
-	int send_count = local_weight + 1;
-	// All process need to know how much elements on each process
-	MPI_Allgather(&send_count, 1, MPI_INT, recv_counts, 1, MPI_INT, MPI_COMM_WORLD);
-
-	// Indicate which place each process data start on reception buffer.
-	displs[0] = 0;
-	for (int i = 1; i < world_size; i++) {
-		displs[i] = displs[i - 1] + recv_counts[i - 1];
-	}
-
-	unsigned int ** final_matrixDP = nullptr;
-	if (we_are_the_master) {
-		final_matrixDP = new unsigned int * [instance.items.count];
-		for (int i = 0; i < instance.items.count; i++) {
-			final_matrixDP[i] = new unsigned int [instance.max_weight + 1];
-		}
-	}
-
-	for (int i = 0; i < instance.items.count; i++) {
-		if (we_are_the_master) {
-			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
-			   final_matrixDP[i], recv_counts, displs, MPI_UNSIGNED,
-			   0, MPI_COMM_WORLD);
-		} else {
-			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
-			   NULL, NULL, NULL, MPI_UNSIGNED,
-			   0, MPI_COMM_WORLD);
-
-		}
-	}
-
-	if (we_are_the_master) {
-		sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
-
-		for (int i = 0; i < instance.items.count; i++) {
-			delete [] final_matrixDP[i];
-		}
-		delete [] final_matrixDP;
-	}
 	/* ----- Cleanup ----- */
 
 	for (int i = 0; i < instance.items.count; i++) {
 		delete [] matrixDP[i];
 	}
 	delete [] matrixDP;
-
-	free(recv_counts);
-	free(displs);
 }
 
 
@@ -610,60 +569,13 @@ void solver4(Instance& instance, int world_size, int world_rank, bool distribute
         free(send_data);
     }
 
-	// Merge each matrixDP on final_matrixDP
-	int* recv_counts = (int *)malloc(world_size * sizeof(int));
-	int* displs = (int *)malloc(world_size * sizeof(int));
-  	assert(recv_counts != NULL);
-  	assert(displs != NULL);
-
-	int send_count = local_weight + 1;
-	// All process need to know how much elements on each process
-	MPI_Allgather(&send_count, 1, MPI_INT, recv_counts, 1, MPI_INT, MPI_COMM_WORLD);
-
-	// Indicate which place each process data start on reception buffer.
-	displs[0] = 0;
-	for (int i = 1; i < world_size; i++) {
-		displs[i] = displs[i - 1] + recv_counts[i - 1];
-	}
-
-	unsigned int ** final_matrixDP = nullptr;
-	if (we_are_the_master) {
-		final_matrixDP = new unsigned int * [instance.items.count];
-		for (int i = 0; i < instance.items.count; i++) {
-			final_matrixDP[i] = new unsigned int [instance.max_weight + 1];
-		}
-	}
-
-	for (int i = 0; i < instance.items.count; i++) {
-		if (we_are_the_master) {
-			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
-			   final_matrixDP[i], recv_counts, displs, MPI_UNSIGNED,
-			   0, MPI_COMM_WORLD);
-		} else {
-			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
-			   NULL, NULL, NULL, MPI_UNSIGNED,
-			   0, MPI_COMM_WORLD);
-
-		}
-	}
-
-	if (we_are_the_master) {
-		sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
-
-		for (int i = 0; i < instance.items.count; i++) {
-			delete [] final_matrixDP[i];
-		}
-		delete [] final_matrixDP;
-	}
+	gather_results_and_backtrack(instance, (unsigned const**)matrixDP, world_size, local_weight, we_are_the_master, timer, distribute_backtrack);
 	/* ----- Cleanup ----- */
 
 	for (int i = 0; i < instance.items.count; i++) {
 		delete [] matrixDP[i];
 	}
 	delete [] matrixDP;
-
-	free(recv_counts);
-	free(displs);
 }
 
 void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k) {
@@ -714,3 +626,61 @@ void sequential_backtrack(Instance const& instance, unsigned const** matrixDP, d
 
 	cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
 }
+
+void gather_results_and_backtrack(Instance const& instance, unsigned const** matrixDP, int world_size, int local_weight, bool we_are_the_master, double& timer, bool distribute_backtrack)
+{
+	// Merge each matrixDP on final_matrixDP
+	int* recv_counts = (int *)malloc(world_size * sizeof(int));
+	int* displs = (int *)malloc(world_size * sizeof(int));
+  	assert(recv_counts != NULL);
+  	assert(displs != NULL);
+
+	int send_count = local_weight + 1;
+	// All process need to know how much elements on each process
+	MPI_Allgather(&send_count, 1, MPI_INT, recv_counts, 1, MPI_INT, MPI_COMM_WORLD);
+
+	// Indicate which place each process data start on reception buffer.
+	displs[0] = 0;
+	for (int i = 1; i < world_size; i++) {
+		displs[i] = displs[i - 1] + recv_counts[i - 1];
+	}
+
+	unsigned int ** final_matrixDP = nullptr;
+	if (we_are_the_master) {
+		final_matrixDP = new unsigned int * [instance.items.count];
+		for (int i = 0; i < instance.items.count; i++) {
+			final_matrixDP[i] = new unsigned int [instance.max_weight + 1];
+		}
+	}
+
+	for (int i = 0; i < instance.items.count; i++) {
+		if (we_are_the_master) {
+			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
+			   final_matrixDP[i], recv_counts, displs, MPI_UNSIGNED,
+			   0, MPI_COMM_WORLD);
+		} else {
+			MPI_Gatherv(matrixDP[i], send_count, MPI_UNSIGNED,
+			   NULL, NULL, NULL, MPI_UNSIGNED,
+			   0, MPI_COMM_WORLD);
+
+		}
+	}
+
+	if (we_are_the_master) {
+		if (distribute_backtrack) {
+			// TODO: Distribute backtrack
+			sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
+		} else {
+			sequential_backtrack(instance, (unsigned const**)final_matrixDP, timer);
+		}
+
+		for (int i = 0; i < instance.items.count; i++) {
+			delete [] final_matrixDP[i];
+		}
+		delete [] final_matrixDP;
+	}
+
+	free(recv_counts);
+	free(displs);
+}
+
