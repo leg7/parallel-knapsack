@@ -189,32 +189,32 @@ void solver1(Instance& instance, int world_size, int world_rank, bool verbose_mo
 		solution.resize(instance.items.count);
 
 		int m = instance.max_weight;
-	for (int i = instance.items.count-1; i >=1 ; i--){
-		if (m < instance.items.weights[i] || matrixDP[i][m] == matrixDP[i-1][m]) {
-			solution[i] = false;
-		} else {
-			solution[i] = true;
-			m -= instance.items.weights[i];
-		}
-	}
-
-	solution[0] = m >= instance.items.weights[0];
-
-	timer += MPI_Wtime();
-
-	if (verbose_mode) { // Print knapsack composition
-		cout << "solution cost by DP: "  << solution_cost << endl;
-		cout << "print DP matrix : " << endl;
-		for (int i = 0; i < instance.items.count; i++){
-			for (int j = 0; j <= instance.max_weight; j++) cout <<  matrixDP[i][j] << " "  ;
-			cout << endl;
+		for (int i = instance.items.count-1; i >=1 ; i--){
+			if (m < instance.items.weights[i] || matrixDP[i][m] == matrixDP[i-1][m]) {
+				solution[i] = false;
+			} else {
+				solution[i] = true;
+				m -= instance.items.weights[i];
+			}
 		}
 
-		cout << "knapsack composition  : ";
-		for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
-			std::cout << ' ' << *it;
+		solution[0] = m >= instance.items.weights[0];
 
-		cout  << endl;
+		timer += MPI_Wtime();
+
+		if (verbose_mode) { // Print knapsack composition
+			cout << "solution cost by DP: "  << solution_cost << endl;
+			cout << "print DP matrix : " << endl;
+			for (int i = 0; i < instance.items.count; i++){
+				for (int j = 0; j <= instance.max_weight; j++) cout <<  matrixDP[i][j] << " "  ;
+				cout << endl;
+			}
+
+			cout << "knapsack composition  : ";
+			for (std::vector<bool>::iterator it = solution.begin() ; it != solution.end(); ++it)
+				std::cout << ' ' << *it;
+
+			cout  << endl;
 		}
 
 		cout << "solution optimale trouvee de cout " << solution_cost << " en temps: " << timer << "s" << endl<< endl;
