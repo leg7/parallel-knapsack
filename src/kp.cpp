@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdlib>
 #include <cassert>
+#include <string>
 
 #include <mpi.h>
 
@@ -13,15 +14,12 @@ using namespace std;
 
 struct Instance;
 
-using fn = void (*)(Instance& instance, int world_size, int world_rank);
+using fn = void (*)(Instance& instance, int world_size, int world_rank, bool distribute_backtrack);
 
-void solver1(Instance& instance, int world_size, int world_rank); 	// Schema 1
-void solver2(Instance& instance, int world_size, int world_rank);	// Schema 2
-void solver3(Instance& instance, int world_size, int world_rank);	// Schema 3 with Bsend and Reicv
-void solver4(Instance& instance, int world_size, int world_rank);	// Schema 3 with Isend and Ireicv
-// void solver5(Instance& instance, int world_size, int world_rank);	// Schema 2 with backtrack distributed
-// void solver6(Instance& instance, int world_size, int world_rank);	// Schema 3 with Bsend and Reicv and backtrack distributed
-// void solver7(Instance& instance, int world_size, int world_rank);	// Schema 3 with Isend and Ireicv and backtrack distributed
+void solver1(Instance& instance, int world_size, int world_rank, bool distribute_backtrack); 	// Schema 1
+void solver2(Instance& instance, int world_size, int world_rank, bool distribute_backtrack);	// Schema 2
+void solver3(Instance& instance, int world_size, int world_rank, bool distribute_backtrack);	// Schema 3 with Bsend and Reicv
+void solver4(Instance& instance, int world_size, int world_rank, bool distribute_backtrack);	// Schema 3 with Isend and Ireicv
 
 void copy_last_k_elements(unsigned int* source, unsigned int* destination, int total_size, int k);
 void sequential_backtrack(Instance const& instance, unsigned const** matrixDP, double& timer);
@@ -30,7 +28,7 @@ void sequential_backtrack(Instance const& instance, unsigned const** matrixDP, d
 
 enum Error_code {
 	ERROR_CODE_TOO_MANY_RANKS,
-	ERROR_CODE_MISSING_INSTANCE_ARGUMENT,
+	ERROR_CODE_BAD_ARGUMENTS,
 	ERROR_CODE_INVALID_SOLVER
 };
 
@@ -48,9 +46,6 @@ enum Solver_key {
 	SOLVER_2,
 	SOLVER_3,
 	SOLVER_4,
-	SOLVER_5,
-	SOLVER_6,
-	SOLVER_7,
 
 	NUMBER_OF_SOLVERS,
 };
@@ -60,12 +55,15 @@ fn SOLVER_LUT[] = {
 	solver2,
 	solver3,
 	solver4
-	// solver5,
-	// solver6,
-	// solver7
 };
 
 bool VERBOSE_MODE = false;
+
+void abort_bad_argument()
+{
+	cerr << "Usage: knapsack --input-file [path] --schema [1-4] --verbose --distribute-backtrack" << endl;
+	MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_BAD_ARGUMENTS);
+}
 
 int main(int argc, char** argv) {
 	MPI_Init(&argc, &argv);
@@ -75,23 +73,48 @@ int main(int argc, char** argv) {
 
 	Solver_key chosen_solver = SOLVER_1;
 
-	if (argc < 3) {
-		cerr << "Usage: knapsack solver[1|2|3|4|5|6|7] inputFile  [verbose] " << endl;
-		cerr << "A thrid option allows to enable the verbose mode for debugging" << endl;
-		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_MISSING_INSTANCE_ARGUMENT);
-	} else if (argc > 1) {
-		chosen_solver = (Solver_key)(std::atoi(argv[1]) - 1);
-	}
+	const char* instance_file = nullptr;
+	bool distribute_backtrack = false;
 
-	if (chosen_solver < SOLVER_1 || chosen_solver >= NUMBER_OF_SOLVERS) {
-		cerr << "Le numéro du solver doit etre entre " << SOLVER_1 + 1 << " et " << NUMBER_OF_SOLVERS << endl;
-		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_INVALID_SOLVER);
-	}
+	for (int i = 1; i < argc; ++i) {
+		char const* option = argv[i];
 
-	const char* instance_file = argv[2];
+		if (strcmp(option, "--input-file") == 0) {
+			++i;
 
-	if (argc == 4) {
-		VERBOSE_MODE = true;
+			if (i >= argc) {
+				cerr << "Please provide a file to the --input-file option" << endl;
+				abort_bad_argument();
+			}
+
+			char const* argument = argv[i];
+
+			instance_file = argument;
+		} else if (strcmp(option, "--schema") == 0) {
+			++i;
+
+			if (i >= argc) {
+				cerr << "Please provide a schema number between 1 and 4 to the option --schema" << endl;
+				abort_bad_argument();
+			}
+
+			char const* argument = argv[i];
+			chosen_solver = (Solver_key)(std::atoi(argument) - 1);
+
+			if (chosen_solver < SOLVER_1 || chosen_solver >= NUMBER_OF_SOLVERS) {
+				cerr << "The schema number for the option --schema must be between " << SOLVER_1 + 1 << " and " << NUMBER_OF_SOLVERS << endl;
+				cerr << "You provided schema number " << argument << endl;
+				MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_INVALID_SOLVER);
+			}
+
+		} else if (strcmp(option, "--verbose") == 0) {
+			VERBOSE_MODE = true;
+		} else if (strcmp(option, "--distributed-backtrack") == 0) {
+			distribute_backtrack = true;
+		} else {
+			cerr << "Argument " << option << " not supported" << endl;
+			abort_bad_argument();
+		}
 	}
 
 	/* ----- Initialisation variables et conteneurs ----- */
@@ -118,7 +141,7 @@ int main(int argc, char** argv) {
 		MPI_Abort(MPI_COMM_WORLD, ERROR_CODE_TOO_MANY_RANKS);
 	}
 
-	SOLVER_LUT[chosen_solver](instance, world_size, world_rank);
+	SOLVER_LUT[chosen_solver](instance, world_size, world_rank, distribute_backtrack);
 
 	MPI_Finalize();
 
@@ -131,7 +154,7 @@ int main(int argc, char** argv) {
 // DP matrix owned by each MPI rank
 // Communication: Use MPI_Allreduce to combine each partial result on each step
 // Ram use : HIGH O(world_size * sizeof(matrixDP))
-void solver1(Instance& instance, int world_size, int world_rank)
+void solver1(Instance& instance, int world_size, int world_rank, bool distribute_backtrack)
 {
 	// Initialise instance data
 	bool const we_are_the_master = world_rank == 0;
@@ -200,7 +223,7 @@ void solver1(Instance& instance, int world_size, int world_rank)
 // Communication: Use MPI_Allgather to know each partial matrix size on each process
 // 					then use MPI_Allgatherv to share result on a global tab (last matrix line made).
 // Ram use : Lower O(world_size * (sizeof(matrixDP) / P) + (world_size * sizeof(row) + sizeof(matrixDP)).
-void solver2(Instance& instance, int world_size, int world_rank)
+void solver2(Instance& instance, int world_size, int world_rank, bool distribute_backtrack)
 {
 
 	// Initialise instance data
@@ -320,7 +343,7 @@ void solver2(Instance& instance, int world_size, int world_rank)
 // 					on the first elements (row) we will only send data,
 // 					on the last element (row) we will only receive data.
 // Ram use : Lower O(world_size * (sizeof(matrixDP) / P) + sizeof(neccessary(row)) + sizeof(matrixDP)).
-void solver3(Instance& instance, int world_size, int world_rank)
+void solver3(Instance& instance, int world_size, int world_rank, bool distribute_backtrack)
 {
 
 	// Initialise instance data
@@ -469,7 +492,7 @@ void solver3(Instance& instance, int world_size, int world_rank)
 
 
 // Like solver3, but using Isend and Irecv
-void solver4(Instance& instance, int world_size, int world_rank)
+void solver4(Instance& instance, int world_size, int world_rank, bool distribute_backtrack)
 {
 
 	// Initialise instance data
